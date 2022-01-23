@@ -172,4 +172,4 @@ class lcModel(nn.Module):
         coords = self.get_coords(lc_im, census)
         glimpse, edited = self.glimpse_net(coords, lc_im.shape, im, muni_id)
 #         print(glimpse.shape)
-        return self.conv_net(glimpse), edited
+        return self.conv_net(glimpse)

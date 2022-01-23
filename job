@@ -1,6 +1,6 @@
 #!/bin/tcsh
-#PBS -N lcM
-#PBS -l nodes=1:meltemi:ppn=12
+#PBS -N lcV
+#PBS -l nodes=1:vortex:ppn=12
 #PBS -l walltime=03:00:00
 #PBS -j oe
 
@@ -12,4 +12,4 @@ module load anaconda3/2021.05
 unsetenv PYTHONPATH
 conda activate dhsrl4
 
-torchrun --nnodes=1 --nproc_per_node=12 --rdzv_id=790876 --rdzv_backend=c10d --rdzv_endpoint=128.239.59.5 /sciclone/home20/hmbaier/lc_v2/run.py
+torchrun --nnodes=2 --nproc_per_node=12 --rdzv_id=790876 --rdzv_backend=c10d --rdzv_endpoint=128.239.56.64 /sciclone/home20/hmbaier/lc_v2/run2.py

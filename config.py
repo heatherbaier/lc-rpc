@@ -80,7 +80,7 @@ data_args.add_argument("--y_path",
                       help = "Full path to json containing muni_id -> num_migrants mapping.")
 data_args.add_argument("--census_path",
                       type = str,
-                      default = "/sciclone/geograd/Heather/lc/census_feats.json",
+                      default = "/sciclone/geograd/Heather/lc/census_feats,json",
                       help = "Full path to json containing muni_id -> census features mapping.")
 data_args.add_argument("--lc_path",
                       type = str,

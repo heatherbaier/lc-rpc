@@ -485,7 +485,7 @@ class Agent:
                 f.write("lcim_batch: " + str(lcim_batch.shape) + "\n" + "census_batch: " + str(census_batch.shape) + "\n")
 
             # lc_net_updated is the model that we optimize every epoch...
-            # So here we run the classfication images through the updates model (the value stored in memoery have been ran through non-updated model)
+            # So here we run the classification images through the updates model (the value stored in memoery have been ran through non-updated model)
             # We do this because in theory our updated model should produce a better pred & therefore higher reward that we can use to calculate loss
             state_action_values = self.lc_net_updated(lcim_batch, census_batch.unsqueeze(0)).gather(1, action_batch)
             

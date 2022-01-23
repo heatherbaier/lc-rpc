@@ -1,8 +1,8 @@
 #!/bin/bash
 
-N=1
+N=2
 
-for i in {1..1}
+for i in {1..2}
 do
     echo "Starting job number $i out of $N"
     qsub job
