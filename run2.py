@@ -58,82 +58,25 @@ def run_training_loop(rank, num_gpus, train_loader, test_loader):
     # get_accuracy(test_loader, net)
 
 
-def get_accuracy(test_loader, model):
-
-    model.eval()
-    correct_sum = 0
-    # Use GPU to evaluate if possible
-    device = torch.device("cuda:0" if model.num_gpus > 0
-        and torch.cuda.is_available() else "cpu")
-    with torch.no_grad():
-        for i, (data, target) in enumerate(test_loader):
-            out = model(data, -1)
-            pred = out.argmax(dim=1, keepdim=True)
-            pred, target = pred.to(device), target.to(device)
-            correct = pred.eq(target.view_as(pred)).sum().item()
-            correct_sum += correct
-
-    print(f"Accuracy {correct_sum / len(test_loader.dataset)}")
-
-
 @record
 def setup_rpc():
 
     train_dl, val_dl = load_data(int(os.environ['WORLD_SIZE']))
 
     if dist.get_rank() == 0:
-
         rpc.init_rpc("parameter_server", rank = dist.get_rank(), world_size = int(os.environ['WORLD_SIZE']), rpc_backend_options = rpc.TensorPipeRpcBackendOptions(_transports=["uv"], rpc_timeout = 5000))
-
-        # TestAgent(int(os.environ['WORLD_SIZE']))
-
-        # run_parameter_server(0, int(os.environ['WORLD_SIZE']))
-
-        # ob_rrefs = []
-        # for ob_rank in range(1, int(os.environ['WORLD_SIZE'])):
-        #     ob_info = rpc.get_worker_info("trainer_{}".format(ob_rank))
-        #     print(ob_info)
-        #     ob_rrefs.append(ob_info)
-
-        # train_dl, val_dl = load_data(int(os.environ['WORLD_SIZE']))
-
-        # print(train_dl)
-
+    elif dist.get_rank() == 1:
+        rpc.init_rpc("evaluator", rank = dist.get_rank(), world_size = int(os.environ['WORLD_SIZE']), rpc_backend_options = rpc.TensorPipeRpcBackendOptions(_transports=["uv"], rpc_timeout = 5000))
+        # evaluator = Evaluator()
     else:
-
         train_dl = train_dl[dist.get_rank()]
-
         print(f"trainer_{dist.get_rank()}")
-        
         run_worker(dist.get_rank(), train_dl)
-
-        # rpc.init_rpc(f"trainer_{dist.get_rank()}", rank = dist.get_rank(), world_size = int(os.environ['WORLD_SIZE']), rpc_backend_options = rpc.TensorPipeRpcBackendOptions(_transports = ["uv"], rpc_timeout = 5000))
-
-    # with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-    #     f.write("OUTSIDE OF IF ELSE STUFF\n")     
-
-
-    # if dist.get_rank() != 0:
-
-    #     run_training_loop(dist.get_rank(), 0, 0, 0)
-    
-    # if 
-    
-    # dist.barrier()
-
-
-
-
-        # init_worker(dist.get_rank(),
-        #                 int(os.environ['WORLD_SIZE']), 
-        #                 0,
-        #                 None,
-        #                 None)
 
     rpc.shutdown()
 
 
-    with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
+    with open(config.log_name, "a") as f:
         f.write("DONE SETTING UP \n")  
 
 
@@ -180,19 +123,6 @@ if __name__ == '__main__':
             f"rank={dist.get_rank()}, world_size = {dist.get_world_size()}\n"
         )
     )
-
-
-    if dist.get_rank() == 0:
-
-        to_delete = ["/sciclone/home20/hmbaier/lc_v2/alog.txt", 
-                     "/sciclone/home20/hmbaier/lc_v2/a_pred_log.txt", 
-                     "/sciclone/home20/hmbaier/lc_v2/a_coords_log.txt", 
-                     "/sciclone/home20/hmbaier/lc_v2/a_batch_log.txt"]
-
-        for f in to_delete:
-            if os.path.isfile(f):
-                os.remove(f)
-
 
     setup_rpc()
 

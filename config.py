@@ -1,3 +1,4 @@
+from datetime import datetime, date
 import argparse
 
 
@@ -91,7 +92,13 @@ data_args.add_argument("--lc_map",
                       default = "/sciclone/geograd/Heather/lc/lc_map.json",
                       help = "Full path to json containing lc_id -> land cover type mapping.")
 
+now = datetime.now()
 
+misc_args = add_argument_group("Miscellaneous Arguments")
+misc_args.add_argument("--log_name",
+                      type = str,
+                      default = "/sciclone/home20/hmbaier/lc_v2/log (" + str(date.today()) + ", " + str(datetime.strptime(now.strftime("%H:%M"), "%H:%M").strftime("%I:%M %p")) + ").txt",
+                      help = "Full path to directory containing imagery")
 
 
 

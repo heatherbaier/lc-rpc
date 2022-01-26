@@ -1,4 +1,5 @@
 from torch.distributed.elastic.multiprocessing.errors import record
+import random
 import json
 import os
 
@@ -21,6 +22,7 @@ class Dataset():
             f.write("IN DATALOADER \n")
 
         self.imagery_dir = imagery_dir  
+        self.world_size = world_size
         self.lc_dir = lc_dir
         self.y_file = y_file
         self.split = split
@@ -29,46 +31,23 @@ class Dataset():
         with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
             f.write("IN DATALOADER 1 \n")        
 
-        try:
-            with open(census_file, "r") as f:
-                self.census_feats = json.load(f)
-        except Exception as e:
-            with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-                f.write("ERROR MESSAGE: " + str(e) + "\n")       
-
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-            f.write("IN DATALOADER 2 \n")            
+        with open(census_file, "r") as f:
+            self.census_feats = json.load(f) 
 
         with open(lc_file, "r") as f:
             self.lc_feats = json.load(f)
 
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-            f.write("IN DATALOADER 3 \n")    
-
         with open(y_file, "r") as f:
             self.ys = json.load(f)
 
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-            f.write("IN DATALOADER 4 \n")    
-
         self.load_data()
         self.batch_size = int(len(self.data) / world_size)
-
-        # with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-        #     f.write(str(self.data) + "\n")   
-
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-            f.write("ABOUT TO SPLIT DATA \n")   
-
-        self.split_data()
-
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-            f.write("DONE LOADING DATA \n")   
+        self.train_val_split()
 
 
     def load_data(self):
 
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
+        with open(config.log_name, "a") as f:
             f.write("LOADING DATA \n")        
 
         for im in os.listdir(self.imagery_dir)[8:]:
@@ -85,10 +64,10 @@ class Dataset():
 
             except Exception as e:
 
-                with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-                    f.write("EXCEPTION: " + str(e) + "\n")   
+                # with open(config.log_name, "a") as f:
+                #     f.write("EXCEPTION: " + str(e) + "\n")   
                 
-                # pass
+                pass
 
             if len(self.data) == 48:
 
@@ -98,6 +77,35 @@ class Dataset():
 
         n = self.batch_size
         self.train_data = [self.data[i:i + n] for i in range(0, len(self.data), n)]
+
+
+    def train_val_split(self):
+
+        print("LENGTH OF DATA: ", len(self.data))
+
+        train_num = int(len(self.data) * self.split)
+        train_indices = random.sample(range(len(self.data)), train_num)
+        val_indices = [i for i in range(len(self.data)) if i not in train_indices]
+        train_data = [self.data[i] for i in train_indices]
+        val_data = [self.data[i] for i in val_indices]   
+
+        self.train_batch_size = int(len(train_data) / (self.world_size - 1))
+
+        if len(val_data) > self.world_size:
+            self.val_batch_size = int(len(val_data) / (self.world_size - 1))
+            self.val_data = [val_data[i:i + self.val_batch_size] for i in range(0, len(val_data), self.val_batch_size)]
+            with open(config.log_name, "a") as f:
+                f.write("VAL BATCH SIZE: " + str(self.val_batch_size) + "\n")  
+        else:
+            self.val_data = [[i] for i in val_data]
+
+        self.train_data = [train_data[i:i + self.train_batch_size] for i in range(0, len(train_data), self.train_batch_size)]
+
+        with open(config.log_name, "a") as f:
+            f.write("TRAIN BATCH SIZE: " + str(self.train_batch_size) + "\n")    
+
+        with open(config.log_name, "a") as f:
+            f.write("VAL BATCH SIZE: " + str(len(val_data)) + "\n") 
 
 
 

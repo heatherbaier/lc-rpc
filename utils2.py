@@ -14,6 +14,8 @@ from dataloader import *
 
 # The global parameter server instance.
 param_server = None
+evaluator = None
+
 # A lock to ensure we only have one parameter server.
 global_lock = Lock()
 
@@ -45,6 +47,11 @@ def remote_method(method, rref, *args, **kwargs):
     return rpc.rpc_sync(rref.owner(), _call_method, args=args, kwargs=kwargs)
 
 
+def remote_method_direct(method, rref, *args, **kwargs):
+    args = [method, rref] + list(args)
+    return rpc.rpc_sync(rref.owner(), _call_method, args=args, kwargs=kwargs)
+
+
 def load_trainer_data(train_dl):
     print("here in dl in rank: ", dist.get_rank())
 
@@ -54,7 +61,7 @@ def run_worker(rank, train_dl):#, world_size, num_gpus, train_loader, test_loade
 
     rpc.init_rpc(f"trainer_{dist.get_rank()}", rank = dist.get_rank(), world_size = int(os.environ['WORLD_SIZE']), rpc_backend_options = rpc.TensorPipeRpcBackendOptions(_transports = ["uv"], rpc_timeout = 5000))
 
-    with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
+    with open(config.log_name, "a") as f:
         f.write(f"Worker rank {rank} initializing RPC IN RUN WORKER")   
 
     run_training_loop(dist.get_rank(), 0, train_dl, 0)
@@ -73,16 +80,83 @@ def get_parameter_server(num_gpus = 0):
         return param_server
 
 
+
+def get_evaluator(placeholder):
+    """
+    Returns a singleton evaluator to all trainer processes
+    """
+    global evaluator
+    # Ensure that we get only one handle to the ParameterServer.
+    with global_lock:
+        if not evaluator:
+            # construct it once
+            evaluator = Evaluator()
+        return evaluator
+
+
+
+class Evaluator:
+
+    def __init__(self):
+
+        self.training_loss = 0
+        self.validation_loss = 0
+        self.num_train_collected = 0
+        self.num_val_collected = 0
+        self.evaluator_rref = rpc.remote(
+            "evaluator", get_evaluator, args=(1,))
+
+    # def get_global_eval_rref(self):
+
+
+    def collect_losses(self, loss):
+
+        train = True
+
+        with open(config.log_name, "a") as f:
+            f.write("IN COLLECT LOSSES WITH NUM = " + str(self.num_train_collected) + "\n")      
+
+        if train:
+            self.training_loss += loss.item()
+            self.num_train_collected += 1
+        else:
+            self.validation_loss += loss.item()
+            self.num_val_collected += 1
+
+
+def get_accuracy(test_loader, model):
+
+    model.eval()
+    correct_sum = 0
+    # Use GPU to evaluate if possible
+    device = torch.device("cuda:0" if model.num_gpus > 0
+        and torch.cuda.is_available() else "cpu")
+    with torch.no_grad():
+        for i, (data, target) in enumerate(test_loader):
+            out = model(data, -1)
+            pred = out.argmax(dim=1, keepdim=True)
+            pred, target = pred.to(device), target.to(device)
+            correct = pred.eq(target.view_as(pred)).sum().item()
+            correct_sum += correct
+
+    print(f"Accuracy {correct_sum / len(test_loader.dataset)}")
+
+
 def run_training_loop(rank, num_gpus, train_loader, test_loader):
 
     # Runs the typical nueral network forward + backward + optimizer step, but
     # in a distributed fashion.
     net = TrainerNet(num_gpus = num_gpus)
+    eval = Evaluator()
+    eval_rref = eval.evaluator_rref
     # Build DistributedOptimizer.
     param_rrefs = net.get_global_param_rrefs()
     opt = DistributedOptimizer(optim.SGD, param_rrefs, lr = 0.03)
 
-    with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
+    with open(config.log_name, "a") as f:
+        f.write("EVALUATOR RREF: " + str(eval_rref) + "\n")  
+
+    with open(config.log_name, "a") as f:
         f.write("DONE UP TO HERE IN TRAINING LOOP!!!!\n")        
 
     print("DONE UP TO HERE IN TRAINING LOOP!!!!")
@@ -96,24 +170,40 @@ def run_training_loop(rank, num_gpus, train_loader, test_loader):
         # features.append(env.get_features())
     # features, ys = torch.cat(features), torch.cat(ys).view(-1, 1)
     
-    with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
+    with open(config.log_name, "a") as f:
         f.write("DONE LOADING IMAGERY ENVIRONMENTS IN RANK: " + str(dist.get_rank()) + ": " + str(len(envs)) + "\n")
-
-    # train_dl = 
-
-    # for 
 
     criterion = torch.nn.L1Loss()
 
-    for i in range(len(envs)):
+    for epoch in range(0, 1):
 
-        with dist_autograd.context() as cid:
+        for i in range(len(envs)):
 
-            try:
+            with dist_autograd.context() as cid:
+
+                # try:
 
                 model_output = net(envs[i].lc, envs[i].features, envs[i].im, envs[i].muni_id)
 
                 loss = criterion(model_output, envs[i].y)
+
+                with open(config.log_name, "a") as f:
+                    f.write("LOSS IN RANK: " + str(dist.get_rank()) + " LOSS: " + str(loss.item()) + "\n")
+
+                with open(config.log_name, "a") as f:
+                    f.write("RPC INFO: " + str(rpc.get_worker_info("evaluator")) + "\n")
+
+                # rpc.rpc_async(1, Evaluator.collect_losses, args = ([loss.item(), 1]))
+
+
+                fut = rpc.rpc_async(
+                    eval_rref.owner(),
+                    _call_method,
+                    args = (Evaluator.collect_losses, eval_rref, loss)
+                )
+
+                fut.wait()
+
 
                 dist_autograd.backward(cid, [loss])
 
@@ -124,12 +214,14 @@ def run_training_loop(rank, num_gpus, train_loader, test_loader):
 
                 opt.step(cid)
 
-                with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-                    f.write("MODEL OUPUT IN RANK: " + str(dist.get_rank()) + ": " + str(model_output) + "\n")
+                with open(config.log_name, "a") as f:
+                    f.write("MODEL OUPUT IN RANK: " + str(dist.get_rank()) + " DATA NUMBER: " + str(i) + " PRED: " + str(model_output) + "\n")
 
-            except:
+                # except:
 
-                pass
+                #     print("FAIL IN RANK: ", str(dist.get_rank()), str(envs[i].muni_id))
+
+        # get_accuracy()
 
     # for i, (data, target) in enumerate(train_loader):
     #     with dist_autograd.context() as cid:
@@ -211,4 +303,5 @@ class ParameterServer(nn.Module):
     def get_param_rrefs(self):
         param_rrefs = [rpc.RRef(param) for param in self.model.parameters()]
         return param_rrefs
+
 
