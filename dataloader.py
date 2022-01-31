@@ -16,20 +16,12 @@ def chunks(l, n):
 class Dataset():
 
     def __init__(self, census_file, lc_file, imagery_dir, lc_dir, y_file, split, world_size):
-
-        
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-            f.write("IN DATALOADER \n")
-
         self.imagery_dir = imagery_dir  
         self.world_size = world_size
         self.lc_dir = lc_dir
         self.y_file = y_file
         self.split = split
         self.data = []
-
-        with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-            f.write("IN DATALOADER 1 \n")        
 
         with open(census_file, "r") as f:
             self.census_feats = json.load(f) 
@@ -41,14 +33,14 @@ class Dataset():
             self.ys = json.load(f)
 
         self.load_data()
-        self.batch_size = int(len(self.data) / world_size)
+        self.batch_size = int(len(self.data) / (world_size - 2))
         self.train_val_split()
 
 
     def load_data(self):
 
-        with open(config.log_name, "a") as f:
-            f.write("LOADING DATA \n")        
+        # with open(config.log_name, "a") as f:
+        #     f.write("LOADING DATA \n")        
 
         for im in os.listdir(self.imagery_dir)[8:]:
 
@@ -69,7 +61,7 @@ class Dataset():
                 
                 pass
 
-            if len(self.data) == 48:
+            if len(self.data) == 48 * 3:
 
                 break
 
@@ -81,9 +73,10 @@ class Dataset():
 
     def train_val_split(self):
 
-        print("LENGTH OF DATA: ", len(self.data))
+        # print("LENGTH OF DATA: ", len(self.data))
 
         train_num = int(len(self.data) * self.split)
+        self.train_num = train_num
         train_indices = random.sample(range(len(self.data)), train_num)
         val_indices = [i for i in range(len(self.data)) if i not in train_indices]
         train_data = [self.data[i] for i in train_indices]
@@ -94,18 +87,18 @@ class Dataset():
         if len(val_data) > self.world_size:
             self.val_batch_size = int(len(val_data) / (self.world_size - 1))
             self.val_data = [val_data[i:i + self.val_batch_size] for i in range(0, len(val_data), self.val_batch_size)]
-            with open(config.log_name, "a") as f:
-                f.write("VAL BATCH SIZE: " + str(self.val_batch_size) + "\n")  
+            # with open(config.log_name, "a") as f:
+            #     f.write("VAL BATCH SIZE: " + str(self.val_batch_size) + "\n")  
         else:
             self.val_data = [[i] for i in val_data]
 
         self.train_data = [train_data[i:i + self.train_batch_size] for i in range(0, len(train_data), self.train_batch_size)]
 
         with open(config.log_name, "a") as f:
-            f.write("TRAIN BATCH SIZE: " + str(self.train_batch_size) + "\n")    
+            f.write("TRAIN NUM: " + str(self.train_num) + "\n")    
 
-        with open(config.log_name, "a") as f:
-            f.write("VAL BATCH SIZE: " + str(len(val_data)) + "\n") 
+        # with open(config.log_name, "a") as f:
+        #     f.write("VAL BATCH SIZE: " + str(len(val_data)) + "\n") 
 
 
 
@@ -121,10 +114,7 @@ def load_data(world_size):
     TO-DO: THIS DOES NOT CURRENTLY LOAD IN THE WHOLE IMAGE (JUST A TUPLE THAT INCLUDES THE LIST OF PARAMETERS THE 
     OBSERVERS WILL NEED TO SET UP THE ENVIRONMENTS) SO ACTUALLY I TENTATIVELY THINK THIS MIGHT BE A FINE WAY TO DO THIS
     """
-
-    with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-        f.write("In load data!! WORLD SIZE: " + str(world_size) + "\n")
-        
+  
     # Load in the data
     data = Dataset(census_file = config.census_path, 
                     lc_file = config.lc_path, 
@@ -138,10 +128,10 @@ def load_data(world_size):
     # val_dl = data.val_data
     batch_size = world_size
 
-    with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
-        f.write("NUMBER OF TRAINING DATA: " + str(len(train_dl)) + "\n")
+    # with open("/sciclone/home20/hmbaier/lc_v2/alog.txt", "a") as f:
+    #     f.write("NUMBER OF TRAINING DATA: " + str(len(train_dl)) + "\n")
 
     # with open("/sciclone/home20/hmbaier/test_rpc/claw_log.txt", "a") as f:
     #     f.write("NUMBER OF VALIDATION DATA: " + str(len(val_dl)) + "\n")
 
-    return train_dl, None
+    return data

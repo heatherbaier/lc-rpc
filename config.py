@@ -23,7 +23,7 @@ training_args.add_argument("--tv_split",
                            help = "Train/Val split percentage - given as a float i.e. .75")
 training_args.add_argument("--num_epochs", 
                            type = int, 
-                           default = 20, 
+                           default = 100, 
                            help = "Number of epochs")
 training_args.add_argument("--n_mini_epochs", 
                            type = int, 
@@ -41,7 +41,10 @@ training_args.add_argument("--mem_batch_size",
                            type = int, 
                            default = 4, 
                            help = "Value by which to decay epsilon")
-
+training_args.add_argument("--lr", 
+                           type = float, 
+                           default = .01, 
+                           help = "Learning Rate")
 
 
 env_args = add_argument_group("RL Environment Arguments")
@@ -49,11 +52,33 @@ env_args.add_argument("--display",
                       type = str, 
                       default = "False", 
                       help = "Whether to display the interactive RL environment during training - Cannot display on HPC")
-env_args.add_argument("--n_glimpses", 
-                      type = int, 
-                      default = 5,
-                      help = "How many land cover glimpses the RL agent can view")
+# env_args.add_argument("--n_glimpses", 
+#                       type = int, 
+#                       default = 5,
+#                       help = "How many land cover glimpses the RL agent can view")
 
+
+model_args = add_argument_group("Model Arguments")
+model_args.add_argument("--n_glimpses", 
+                      type = str, 
+                      default = 4, 
+                      help = "Size of glimpse_net FC layer output")
+model_args.add_argument("--glimpse_hidden_size", 
+                      type = str, 
+                      default = 128, 
+                      help = "Size of glimpse_net FC layer output")
+model_args.add_argument("--core_hidden_size", 
+                      type = str, 
+                      default = 128, 
+                      help = "Size of glimpse_net FC layer output")
+model_args.add_argument("--lc_fc_size", 
+                      type = int, 
+                      default = 128,
+                      help = "How many land cover glimpses the RL agent can view")
+# model_args.add_argument("--action_input_size", 
+#                       type = str, 
+#                       default = 128, 
+#                       help = "Size of core_net FC layer output")
 
 # data_args = add_argument_group("Data Arguments")
 # data_args.add_argument("--imagery_dir",
@@ -73,7 +98,7 @@ data_args.add_argument("--imagery_dir",
                       help = "Full path to directory containing imagery")
 data_args.add_argument("--lc_dir",
                       type = str,
-                      default = "/sciclone/geograd/Heather/lc/extracted/",
+                      default = "/sciclone/geograd/Heather/lc/extracted_100m/",
                       help = "Full path to land cover tiff file directory")
 data_args.add_argument("--y_path",
                       type = str,
@@ -99,6 +124,26 @@ misc_args.add_argument("--log_name",
                       type = str,
                       default = "/sciclone/home20/hmbaier/lc_v2/log (" + str(date.today()) + ", " + str(datetime.strptime(now.strftime("%H:%M"), "%H:%M").strftime("%I:%M %p")) + ").txt",
                       help = "Full path to directory containing imagery")
+misc_args.add_argument("--train_records_name",
+                      type = str,
+                      default = "/sciclone/home20/hmbaier/lc_v2/records (" + str(date.today()) + ", " + str(datetime.strptime(now.strftime("%H:%M"), "%H:%M").strftime("%I:%M %p")) + ")/train_records_epoch{epoch} (" + str(date.today()) + ", " + str(datetime.strptime(now.strftime("%H:%M"), "%H:%M").strftime("%I:%M %p")) + ").txt",
+                      help = "Full path to directory containing imagery")
+misc_args.add_argument("--val_records_name",
+                      type = str,
+                      default = "/sciclone/home20/hmbaier/lc_v2/records (" + str(date.today()) + ", " + str(datetime.strptime(now.strftime("%H:%M"), "%H:%M").strftime("%I:%M %p")) + ")/val_records_epoch{epoch} (" + str(date.today()) + ", " + str(datetime.strptime(now.strftime("%H:%M"), "%H:%M").strftime("%I:%M %p")) + ").txt",
+                      help = "Full path to directory containing imagery")
+misc_args.add_argument("--use_rpc",
+                      type = bool,
+                      default = False,
+                      help = "Whether to use RPC to communicate training statistics.")
+misc_args.add_argument("--find_unused_parameters",
+                      type = bool,
+                      default = False,
+                      help = "Whether to use find unused parameters in DDP model initialization.")
+misc_args.add_argument("--records_dir",
+                      type = str,
+                      default = "/sciclone/home20/hmbaier/lc_v2/records (" + str(date.today()) + ", " + str(datetime.strptime(now.strftime("%H:%M"), "%H:%M").strftime("%I:%M %p")) + ")/",
+                      help = "Path to save epoch records too")
 
 
 
@@ -106,5 +151,7 @@ misc_args.add_argument("--log_name",
 def get_config():
     config, unparsed = parser.parse_known_args()
     return config, unparsed
+
+
 
 

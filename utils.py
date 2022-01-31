@@ -1,185 +1,129 @@
-from torch.distributed.rpc import RRef, rpc_sync, rpc_async, remote
-import torch.distributed.autograd as dist_autograd
-from collections import namedtuple, deque
-import torch.distributed.rpc as rpc
-import torch.nn.functional as F
-from torch import nn
-import random
+from torch.distributed.elastic.multiprocessing.errors import record
+
+import os
+import sys
+import tempfile
 import torch
+import torch.distributed as dist
+import torch.nn as nn
+import torch.optim as optim
+import torch.multiprocessing as mp
+from torchvision import models
+import time
+
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed.rpc as rpc
+from threading import Lock
+
+from environment import *
+from dataloader import *
+from new_model import *
+from utils import *
 
 
+# The evaluator instance.
+evaluator = None
+
+# A lock to ensure we only have one parameter server.
+global_lock = Lock()
 
 
-# # Use dist autograd to retrieve gradients accumulated for this model.
-# # Primarily used for verification.
-# def get_dist_gradients(self, cid):
-#     grads = dist_autograd.get_gradients(cid)
-#     # This output is forwarded over RPC, which as of 1.5.0 only accepts CPU tensors.
-#     # Tensors must be moved in and out of GPU memory due to this.
-#     cpu_grads = {}
-#     for k, v in grads.items():
-#         k_cpu, v_cpu = k.to("cpu"), v.to("cpu")
-#         cpu_grads[k_cpu] = v_cpu
-#     return cpu_grads
+def setup(rank, world_size):
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
-# # Wrap local parameters in a RRef. Needed for building the
-# # DistributedOptimizer which optimizes paramters remotely.
-# def get_param_rrefs(self):
-#     param_rrefs = [rpc.RRef(param) for param in self.model.parameters()]
-#     return param_rrefs
+def cleanup():
+    dist.destroy_process_group()
+
+def _call_method(method, rref, *args, **kwargs):
+
+    r"""
+    a helper function to call a method on the given RRef
+    """
+
+    return method(rref.local_value(), *args, **kwargs)
 
 
-
-def calc_reward(true, pred):
-
-    quants = [true * .10, 
-            true * .20, 
-            true * .30, 
-            true * .40, 
-            true * .50, 
-            true * .60, 
-            true * .70, 
-            true * .80, 
-            true * .90]
-    
-    if true == 0:
-        quants = [true + 1, 
-                true + 2, 
-                true + 3,
-                true + 4, 
-                true + 5, 
-                true + 6,
-                true + 7, 
-                true + 8, 
-                true + 9]
-
-    if (pred >= true - quants[0]) and (pred <= true + quants[0]):
-        r = 100
-    elif (pred >= true - quants[1]) and (pred <= true + quants[1]):
-        r = 90
-    elif (pred >= true - quants[2]) and (pred <= true + quants[2]):
-        r = 80
-    elif (pred >= true - quants[3]) and (pred <= true + quants[3]):
-        r = 70        
-    elif (pred >= true - quants[4]) and (pred <= true + quants[4]):
-        r = 60
-    elif (pred >= true - quants[5]) and (pred <= true + quants[5]):
-        r = 50        
-    elif (pred >= true - quants[6]) and (pred <= true + quants[6]):
-        r = 40        
-    elif (pred >= true - quants[7]) and (pred <= true + quants[7]):
-        r = 30
-    elif (pred >= true - quants[8]) and (pred <= true + quants[8]):
-        r = 20      
-    else:
-        r = 0
-        
-    return r
+def remote_method(method, rref, *args, **kwargs):
+    args = [method, rref] + list(args)
+    return rpc.rpc_sync(rref.owner(), _call_method, args=args, kwargs=kwargs)
 
 
-Transition = namedtuple('Transition', ('census_feat', 'action', 'next_state', 'reward', 'lc_im'))
+def setup_data(world_size):
 
-class ReplayMemory(object):
+    data = load_data(world_size)
+    print(data)
+    train_dl, val_dl = data.train_data, None
+    train_dl = train_dl[dist.get_rank()]
 
-    def __init__(self, capacity):
-        self.memory = deque([],maxlen=capacity)
+    envs = []
+    for i in train_dl:
+        muni_id, features, impath, lcpath, y = i
+        env = Env(muni_id, features, y, impath, lcpath, id)
+        envs.append(env)
 
-    def push(self, *args):
-        """Save a transition"""
-        self.memory.append(Transition(*args))
-
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-        return len(self.memory)
+    return envs, data.train_num
 
 
-def clean(epoch_preds, epoch_ys):
-    
-    epoch_preds = list(epoch_preds)
-    epoch_preds.sort(key = lambda i: i[0])
-    epoch_ys.sort(key = lambda i: i[0])
+def get_evaluator(placeholder):
+    """
+    Returns a singleton evaluator to all trainer processes
+    """
+    global evaluator
+    # Ensure that we get only one handle to the ParameterServer.
+    with global_lock:
+        if not evaluator:
+            # construct it once
+            evaluator = Evaluator()
+        return evaluator
 
-    epoch_preds = [i[1] for i in epoch_preds]
-    epoch_ys = [i[1] for i in epoch_ys]
+# https://github.com/pytorch/examples/blob/master/imagenet/main.py
+class AverageMeter:
+    def __init__(self):
+        self.reset()
 
-    preds = torch.tensor(epoch_preds).view(-1, 1)
-    trues = torch.tensor(epoch_ys).view(-1, 1)
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
 
-    return preds, trues
-
-
-# def _call_method(method, rref, *args, **kwargs):
-
-#     r"""
-#     a helper function to call a method on the given RRef
-#     """
-
-#     return method(rref.local_value(), *args, **kwargs)
-
-
-# def _remote_method(method, rref, *args, **kwargs):
-
-#     r"""
-#     a helper function to run method on the owner of rref and fetch back the
-#     result using RPC
-#     """
-
-#     args = [method, rref] + list(args)
-#     return rpc_sync(rref.owner(), _call_method, args = args, kwargs = kwargs)
+    def update(self, val, n = 1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 
-# class Policy(nn.Module):
+class Evaluator:
 
-#     r"""
-#     Borrowing the ``Policy`` class from the Reinforcement Learning example.
-#     Copying the code to make these two examples independent.
-#     See https://github.com/pytorch/examples/tree/master/reinforcement_learning
-#     """
+    def __init__(self):
 
-#     def __init__(self, h, w, outputs):
+        self.training_loss = 0
+        self.validation_loss = 0
+        self.num_train_collected = 0
+        self.num_val_collected = 0
+        self.evaluator_rref = rpc.remote(
+            "worker_0", get_evaluator, args=(1,))
+        self.epoch_tracker = {}
+        self.num_train = 35
 
-#         super(Policy, self).__init__()
-#         self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2)
-#         self.bn1 = nn.BatchNorm2d(16)
-#         self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
-#         self.bn2 = nn.BatchNorm2d(32)
-#         self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
-#         self.bn3 = nn.BatchNorm2d(32)
+    def collect_losses(self, loss, epoch):
 
-#         # Number of Linear input connections depends on output of conv2d layers
-#         # and therefore the input image size, so compute it.
-#         def conv2d_size_out(size, kernel_size = 5, stride = 2):
-#             return (size - (kernel_size - 1) - 1) // stride  + 1
-#         convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w)))
-#         convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h)))
-#         linear_input_size = convw * convh * 32
-#         self.head = nn.Linear(linear_input_size, outputs)
-#         self.mig_head = nn.Linear(linear_input_size, 1)
-#         self.rnn = torch.nn.LSTM(input_size = linear_input_size, hidden_size = 256, num_layers = 1, batch_first = True)
-#         self.fc = torch.nn.Linear(256, 1)
+        # print("IN COLLECT LOSSES!")
 
+        train = True 
 
-#     # Called with either one element to determine next action, or a batch
-#     # during optimization. Returns tensor([[left0exp,right0exp]...]).
-#     def forward(self, x, seq = None, select = False):
-        
-#         # x = x.to(device)
-#         x = F.relu(self.bn1(self.conv1(x)))
-#         x = F.relu(self.bn2(self.conv2(x)))
-#         x = F.relu(self.bn3(self.conv3(x)))
+        if epoch in self.epoch_tracker.keys():
+            self.epoch_tracker[epoch].update(loss.item())
+            if self.epoch_tracker[epoch].count == self.num_train:
+                print("EPOCH: ", str(epoch), str(self.epoch_tracker[epoch].avg))
+                with open(config.log_name, "a") as f:
+                    f.write("EPOCH: " + str(epoch) + str(self.epoch_tracker[epoch].avg) + "\n")    
+        else:
+            self.epoch_tracker[epoch] = AverageMeter()
+            self.epoch_tracker[epoch].update(loss.item())
 
-#         if seq is not None:
-#             seq = torch.cat( (seq, x.view(x.size(0), -1).unsqueeze(0)), dim = 1 )
-#         else:
-#             seq = x.view(x.size(0), -1).unsqueeze(0)
+        with open(config.log_name, "a") as f:
+            f.write("IN COLLECT LOSSES WITH NUM = " + str(self.num_train_collected) + "\n")    
 
-#         pred = self.rnn(seq)[0][:, -1, :].unsqueeze(0)
-
-#         if select:
-#             return self.head(x.view(x.size(0), -1)), self.fc(pred), x.view(x.size(0), -1).unsqueeze(0)
-#         else:
-#             return self.head(x.view(x.size(0), -1)), self.fc(pred)
-
-
+        return 0
